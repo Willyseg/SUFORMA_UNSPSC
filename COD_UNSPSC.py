@@ -4,7 +4,7 @@ import io
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Buscador de Experiencias SuForma",
+    page_title="Buscador de Experiencias SuForma- Soluciones SF - Sisucol",
     page_icon="🔍",
     layout="wide"
 )
@@ -110,7 +110,7 @@ st.title("💼 Buscador de Experiencias SuForma")
 with st.sidebar:
     st.header("📂 Gestión de Datos")
     uploaded_file = st.file_uploader("Subir base de datos (CSV)", type=['csv'])
-    st.info("Sube el archivo para analizar las experiencias de las 3 empresas.")
+    st.info("Sube el archivo para analizar las experiencias de las empresas.")
 
 raw_df = load_data(uploaded_file)
 
@@ -168,7 +168,7 @@ if raw_df is not None:
     m2.metric("Valor Total SMMLV", format_latino_decimal(filtered_df['clean_smmlv'].sum()))
     m3.metric("Presupuesto Total COP", format_latino_money(filtered_df['clean_cop'].sum()))
 
-    # Tabla Desglosada por Empresa (Si hay más de una empresa)
+    # Tabla Desglosada por Empresa
     distinct_companies = filtered_df[col_map['empresa']].nunique()
     
     if distinct_companies > 1:
@@ -179,10 +179,8 @@ if raw_df is not None:
             'clean_cop': 'sum'
         }).reset_index()
         
-        # Renombrar para mejor visualización
         summary_table.columns = ['Empresa / Contratista', 'Experiencias', 'Total SMMLV', 'Total COP']
         
-        # Formatear números en la tabla para visualización
         display_table = summary_table.copy()
         display_table['Total SMMLV'] = display_table['Total SMMLV'].apply(format_latino_decimal)
         display_table['Total COP'] = display_table['Total COP'].apply(format_latino_money)
@@ -193,8 +191,11 @@ if raw_df is not None:
     if count > 0:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Exportamos incluyendo la nueva columna de Total_Codigos
-            filtered_df.drop(columns=['clean_smmlv', 'clean_cop']).to_excel(writer, index=False)
+            # Re-formatear para el Excel de salida
+            export_df = filtered_df.copy()
+            export_df[col_map['valor_smmlv']] = export_df['clean_smmlv'].apply(format_latino_decimal)
+            export_df[col_map['valor_cop']] = export_df['clean_cop'].apply(lambda x: f"{x:,.0f}".replace(",", "."))
+            export_df.drop(columns=['clean_smmlv', 'clean_cop']).to_excel(writer, index=False)
         st.download_button(label="📊 Descargar Resultados en Excel", data=output.getvalue(), file_name="reporte_experiencias.xlsx")
 
     st.markdown("---")
@@ -205,9 +206,9 @@ if raw_df is not None:
     else:
         for _, row in filtered_df.iterrows():
             all_codes = [c.strip() for c in str(row[col_map['unspsc']]).replace(';', ',').split(',') if c.strip()]
-            badges = "".join([f"<span style='background:{'#2563eb' if c in target_codes else '#f1f5f9'}; color:{'white' if c in target_codes else '#64748b'}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px;'>{c}</span>" for c in all_codes])
+            badges_html = "".join([f"<span style='background:{'#2563eb' if c in target_codes else '#f1f5f9'}; color:{'white' if c in target_codes else '#64748b'}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px;'>{c}</span>" for c in all_codes])
             
-            # HTML de la Tarjeta
+            # HTML de la Tarjeta corregido
             card_html = f"""
 <div style="background:white; border-radius:12px; border:1px solid #e5e7eb; padding:20px; margin-bottom:20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -217,7 +218,13 @@ if raw_df is not None:
 <div style="font-size:18px; font-weight:bold; color:#111827; margin-bottom:4px;">{row[col_map['contratante']]}</div>
 <div style="font-size:14px; color:#4b5563; margin:12px 0; border-left:4px solid #3b82f6; padding-left:12px; line-height:1.4;">{row[col_map['objeto']]}</div>
 <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; background:#f9fafb; padding:12px; border-radius:8px; margin-bottom:15px;">
-<div>14px; font-weight:bold; color:#059669;">{format_latino_decimal(row['clean_smmlv'])}</div>
+<div>
+<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Valor COP</div>
+<div style="font-size:14px; font-weight:600;">{format_latino_money(row['clean_cop'])}</div>
+</div>
+<div>
+<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Valor SMMLV</div>
+<div style="font-size:14px; font-weight:bold; color:#059669;">{format_latino_decimal(row['clean_smmlv'])}</div>
 </div>
 <div style="text-align:center; border-left: 1px solid #e5e7eb;">
 <div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Total Códigos</div>
@@ -225,15 +232,9 @@ if raw_df is not None:
 </div>
 </div>
 <div style="font-size:11px; color:#9ca3af; margin-bottom:6px; font-weight:bold;">CÓDIGOS UNSPSC:</div>
-<div>{badges}</div>
+<div>{badges_html}</div>
 </div>
 """
             st.markdown(card_html, unsafe_allow_html=True)
 else:
-    st.info("👋 Bienvenido. Sube el archivo CSV con las experiencias para comenzar el análisis.")
-<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Valor COP</div>
-<div style="font-size:14px; font-weight:600;">{format_latino_money(row['clean_cop'])}</div>
-</div>
-<div>
-<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Valor SMMLV</div>
-<div style="font-size:
+    st.info("Bienvenido. Sube el archivo CSV con las experiencias para comenzar el análisis.")
