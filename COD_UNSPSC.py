@@ -4,7 +4,7 @@ import io
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Buscador de Experiencias SuForma- Soluciones SF - Sisucol",
+    page_title="Buscador de Experiencias SuForma",
     page_icon="🔍",
     layout="wide"
 )
@@ -37,14 +37,17 @@ st.markdown("""
 
 def clean_currency_cop(val):
     if pd.isna(val): return 0
-    val_str = str(val).replace('.', '').replace('$', '').strip()
+    # Eliminar puntos de miles, símbolos de peso y espacios
+    val_str = str(val).replace('.', '').replace('$', '').replace(' ', '').strip()
     try:
+        # Manejar si hay coma decimal residual
         return int(float(val_str.replace(',', '.')))
     except:
         return 0
 
 def clean_smmlv(val):
     if pd.isna(val): return 0.0
+    # Formato latino: 1.000,50 -> 1000.50
     val_str = str(val).replace('.', '').replace(',', '.').strip()
     try:
         return float(val_str)
@@ -52,7 +55,7 @@ def clean_smmlv(val):
         return 0.0
 
 def identify_columns(df):
-    """Mapeo robusto de columnas eliminando espacios y normalizando a minúsculas."""
+    """Mapeo inteligente de columnas basado en el nuevo formato suministrado."""
     cols = list(df.columns)
     mapping = {
         'id': None, 
@@ -62,34 +65,42 @@ def identify_columns(df):
         'objeto': None, 
         'valor_cop': None, 
         'valor_smmlv': None, 
-        'unspsc': None
+        'unspsc': None,
+        'total_codigos_file': None # Para detectar si ya trae la cuenta
     }
     
     for col in cols:
         c = str(col).lower().strip()
-        if 'id' in c and mapping['id'] is None: mapping['id'] = col
+        # Mapeo de ID (Busca ID o Experiencia_No)
+        if ('id' in c or 'experiencia_no' in c) and mapping['id'] is None: mapping['id'] = col
         elif 'consecutivo' in c: mapping['consecutivo'] = col
         elif ('empresa' in c or 'contratista' in c) and mapping['empresa'] is None: mapping['empresa'] = col
         elif 'contratante' in c: mapping['contratante'] = col
         elif 'objeto' in c: mapping['objeto'] = col
         elif ('valor' in c or 'presupuesto' in c) and 'cop' in c: mapping['valor_cop'] = col
         elif 'smmlv' in c: mapping['valor_smmlv'] = col
-        elif 'unspsc' in c or 'codigos' in c: mapping['unspsc'] = col
+        # Mapeo de Códigos (Busca Codigos o UNSPSC)
+        elif ('codigos' in c or 'unspsc' in c) and 'total' not in c: mapping['unspsc'] = col
+        elif 'total' in c and 'codigos' in c: mapping['total_codigos_file'] = col
+        
     return mapping
 
 def load_data(uploaded_file):
     try:
         if uploaded_file is not None:
+            # Soportar múltiples delimitadores (Punto y coma, Coma, Tabulación)
             encodings = ['utf-8', 'latin-1', 'cp1252']
+            seps = [';', ',', '\t']
+            
             for enc in encodings:
-                try:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, sep=';', encoding=enc)
-                    if len(df.columns) < 3:
+                for s in seps:
+                    try:
                         uploaded_file.seek(0)
-                        df = pd.read_csv(uploaded_file, sep=',', encoding=enc)
-                    if len(df.columns) >= 3: return df
-                except: continue
+                        df = pd.read_csv(uploaded_file, sep=s, encoding=enc)
+                        if len(df.columns) >= 5: # Si detectó suficientes columnas, es válido
+                            return df
+                    except:
+                        continue
         return None
     except Exception as e:
         st.error(f"Error crítico al cargar: {e}")
@@ -110,7 +121,7 @@ st.title("💼 Buscador de Experiencias SuForma")
 with st.sidebar:
     st.header("📂 Gestión de Datos")
     uploaded_file = st.file_uploader("Subir base de datos (CSV)", type=['csv'])
-    st.info("Sube el archivo para analizar las experiencias de las empresas.")
+    st.info("Acepta formatos con columnas: EMPRESA, Experiencia_No, Codigos, etc.")
 
 raw_df = load_data(uploaded_file)
 
@@ -118,23 +129,27 @@ if raw_df is not None:
     df = raw_df.copy()
     col_map = identify_columns(df)
     
-    # Validar columnas críticas
-    missing = [k for k, v in col_map.items() if v is None]
+    # Validar columnas mínimas necesarias
+    required = ['id', 'contratante', 'objeto', 'valor_cop', 'valor_smmlv', 'unspsc']
+    missing = [k for k in required if col_map[k] is None]
+    
     if missing:
         st.error(f"❌ No se detectaron las columnas: {', '.join(missing)}")
+        st.write("Columnas encontradas en tu archivo:", list(df.columns))
         st.stop()
 
-    # PROCESAMIENTO
+    # PROCESAMIENTO DE DATOS
     df['clean_smmlv'] = df[col_map['valor_smmlv']].apply(clean_smmlv)
     df['clean_cop'] = df[col_map['valor_cop']].apply(clean_currency_cop)
     df[col_map['unspsc']] = df[col_map['unspsc']].astype(str)
     
-    # Cálculo de total de códigos
+    # Cálculo dinámico de total de códigos (por si el del archivo no es exacto)
     def count_codes(val):
+        if pd.isna(val) or val == 'nan': return 0
         codes = [c.strip() for c in str(val).replace(';', ',').split(',') if c.strip()]
         return len(codes)
     
-    df['Total_Codigos'] = df[col_map['unspsc']].apply(count_codes)
+    df['Calculated_Total_Codigos'] = df[col_map['unspsc']].apply(count_codes)
 
     # Filtros
     st.subheader("🔍 Filtros de Búsqueda")
@@ -168,52 +183,55 @@ if raw_df is not None:
     m2.metric("Valor Total SMMLV", format_latino_decimal(filtered_df['clean_smmlv'].sum()))
     m3.metric("Presupuesto Total COP", format_latino_money(filtered_df['clean_cop'].sum()))
 
-    # Tabla Desglosada por Empresa
-    distinct_companies = filtered_df[col_map['empresa']].nunique()
-    
-    if distinct_companies > 1:
-        st.markdown("#### Desglose por Empresa")
-        summary_table = filtered_df.groupby(col_map['empresa']).agg({
-            col_map['id']: 'count',
-            'clean_smmlv': 'sum',
-            'clean_cop': 'sum'
-        }).reset_index()
-        
-        summary_table.columns = ['Empresa / Contratista', 'Experiencias', 'Total SMMLV', 'Total COP']
-        
-        display_table = summary_table.copy()
-        display_table['Total SMMLV'] = display_table['Total SMMLV'].apply(format_latino_decimal)
-        display_table['Total COP'] = display_table['Total COP'].apply(format_latino_money)
-        
-        st.table(display_table)
+    # Resumen Desglosado por Empresa
+    if col_map['empresa']:
+        distinct_companies = filtered_df[col_map['empresa']].nunique()
+        if distinct_companies > 1:
+            st.markdown("#### Desglose por Empresa")
+            summary_table = filtered_df.groupby(col_map['empresa']).agg({
+                col_map['id']: 'count',
+                'clean_smmlv': 'sum',
+                'clean_cop': 'sum'
+            }).reset_index()
+            
+            summary_table.columns = ['Empresa', 'Cant. Experiencias', 'Total SMMLV', 'Total COP']
+            
+            # Formatear la tabla para el usuario
+            display_table = summary_table.copy()
+            display_table['Total SMMLV'] = display_table['Total SMMLV'].apply(format_latino_decimal)
+            display_table['Total COP'] = display_table['Total COP'].apply(format_latino_money)
+            
+            st.table(display_table)
 
     # Botón de Descarga
     if count > 0:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            # Re-formatear para el Excel de salida
             export_df = filtered_df.copy()
             export_df[col_map['valor_smmlv']] = export_df['clean_smmlv'].apply(format_latino_decimal)
             export_df[col_map['valor_cop']] = export_df['clean_cop'].apply(lambda x: f"{x:,.0f}".replace(",", "."))
-            export_df.drop(columns=['clean_smmlv', 'clean_cop']).to_excel(writer, index=False)
-        st.download_button(label="📊 Descargar Resultados en Excel", data=output.getvalue(), file_name="reporte_experiencias.xlsx")
+            # Quitar columnas de proceso internas
+            export_df.drop(columns=['clean_smmlv', 'clean_cop', 'Calculated_Total_Codigos']).to_excel(writer, index=False)
+        st.download_button(label="📊 Descargar Reporte en Excel", data=output.getvalue(), file_name="reporte_suforma.xlsx")
 
     st.markdown("---")
 
     # RESULTADOS EN TARJETAS
     if count == 0:
-        st.warning("No se encontraron resultados.")
+        st.warning("No se encontraron resultados para los filtros aplicados.")
     else:
         for _, row in filtered_df.iterrows():
             all_codes = [c.strip() for c in str(row[col_map['unspsc']]).replace(';', ',').split(',') if c.strip()]
-            badges_html = "".join([f"<span style='background:{'#2563eb' if c in target_codes else '#f1f5f9'}; color:{'white' if c in target_codes else '#64748b'}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px;'>{c}</span>" for c in all_codes])
+            badges_html = "".join([f"<span style='background:{'#2563eb' if c in target_codes else '#f1f5f9'}; color:{'white' if c in target_codes else '#64748b'}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px; border: 1px solid {'#1d4ed8' if c in target_codes else '#e2e8f0'};'>{c}</span>" for c in all_codes])
             
-            # HTML de la Tarjeta corregido
+            empresa_val = row[col_map['empresa']] if col_map['empresa'] else "N/A"
+            consecutivo_val = row[col_map['consecutivo']] if col_map['consecutivo'] else "N/A"
+            
             card_html = f"""
 <div style="background:white; border-radius:12px; border:1px solid #e5e7eb; padding:20px; margin-bottom:20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-<div style="font-size:12px; color:#9ca3af;">ID: {row[col_map['id']]} | Consecutivo: {row[col_map['consecutivo']]}</div>
-<div class="company-badge">🏢 {row[col_map['empresa']]}</div>
+<div style="font-size:12px; color:#9ca3af;">ID: {row[col_map['id']]} | Consecutivo: {consecutivo_val}</div>
+<div class="company-badge">🏢 {empresa_val}</div>
 </div>
 <div style="font-size:18px; font-weight:bold; color:#111827; margin-bottom:4px;">{row[col_map['contratante']]}</div>
 <div style="font-size:14px; color:#4b5563; margin:12px 0; border-left:4px solid #3b82f6; padding-left:12px; line-height:1.4;">{row[col_map['objeto']]}</div>
@@ -227,8 +245,8 @@ if raw_df is not None:
 <div style="font-size:14px; font-weight:bold; color:#059669;">{format_latino_decimal(row['clean_smmlv'])}</div>
 </div>
 <div style="text-align:center; border-left: 1px solid #e5e7eb;">
-<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Total Códigos</div>
-<div style="font-size:16px; font-weight:bold; color:#3b82f6;">{row['Total_Codigos']}</div>
+<div style="font-size:10px; color:#6b7280; text-transform:uppercase;">Cant. Códigos</div>
+<div style="font-size:16px; font-weight:bold; color:#3b82f6;">{row['Calculated_Total_Codigos']}</div>
 </div>
 </div>
 <div style="font-size:11px; color:#9ca3af; margin-bottom:6px; font-weight:bold;">CÓDIGOS UNSPSC:</div>
@@ -237,4 +255,4 @@ if raw_df is not None:
 """
             st.markdown(card_html, unsafe_allow_html=True)
 else:
-    st.info("Bienvenido. Sube el archivo CSV con las experiencias para comenzar el análisis.")
+    st.info("👋 Bienvenido al Buscador de Experiencias SuForma. Por favor sube tu archivo CSV para comenzar.")
