@@ -110,7 +110,7 @@ st.title("💼 Buscador de Experiencias SuForma")
 with st.sidebar:
     st.header("📂 Gestión de Datos")
     uploaded_file = st.file_uploader("Subir base de datos (CSV)", type=['csv'])
-    st.info("Búsqueda avanzada: permite códigos parciales (Segmento, Familia o Clase).")
+    st.info("Búsqueda avanzada: permite códigos parciales y múltiples separadores (espacio o coma).")
 
 raw_df = load_data(uploaded_file)
 
@@ -143,7 +143,11 @@ if raw_df is not None:
     
     r1_c1, r1_c2 = st.columns(2)
     with r1_c1:
-        search_unspsc = st.text_input("Códigos UNSPSC (Búsqueda por inicio de código)", placeholder="Ej: 1411 (busca toda la familia)")
+        # Lógica mejorada: ahora permite espacios o comas
+        search_unspsc = st.text_input(
+            "Códigos UNSPSC", 
+            placeholder="Ej: 3116 3119 o 3116, 3119"
+        )
     with r1_c2:
         search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Papelería")
 
@@ -160,7 +164,9 @@ if raw_df is not None:
 
     # Lógica de Filtrado Global
     filtered_df = df.copy()
-    target_codes = [c.strip() for c in search_unspsc.split(',') if c.strip()]
+    
+    # Procesamiento flexible de la entrada de códigos (espacios o comas)
+    target_codes = [c.strip() for c in search_unspsc.replace(',', ' ').split() if c.strip()]
 
     if search_object:
         filtered_df = filtered_df[filtered_df[col_map['objeto']].str.contains(search_object, case=False, na=False)]
