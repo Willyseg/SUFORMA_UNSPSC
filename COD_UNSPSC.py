@@ -4,7 +4,7 @@ import io
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Buscador de Experiencias SuForma - Sisucol - SF",
+    page_title="Buscador de Experiencias SuForma",
     page_icon="🔍",
     layout="wide"
 )
@@ -110,7 +110,7 @@ st.title("💼 Buscador de Experiencias SuForma")
 with st.sidebar:
     st.header("📂 Gestión de Datos")
     uploaded_file = st.file_uploader("Subir base de datos (CSV)", type=['csv'])
-    st.info("Filtra por UNSPSC, Objeto y Empresa simultáneamente.")
+    st.info("Filtra por UNSPSC, Objeto, Entidad y Empresa simultáneamente.")
 
 raw_df = load_data(uploaded_file)
 
@@ -136,21 +136,22 @@ if raw_df is not None:
     df['Calculated_Total_Codigos'] = df[col_map['unspsc']].apply(count_codes)
 
     # -------------------------------------------------------------------------
-    # SECCIÓN DE FILTROS MEJORADA
+    # SECCIÓN DE FILTROS ACTUALIZADA (4 CAMPOS)
     # -------------------------------------------------------------------------
     st.subheader("🔍 Filtros de Búsqueda")
     
-    # Crear 3 columnas para los filtros
-    f1, f2, f3 = st.columns([1, 1, 1])
-    
-    with f1:
+    # Fila 1 de filtros
+    r1_c1, r1_c2 = st.columns(2)
+    with r1_c1:
         search_unspsc = st.text_input("Códigos UNSPSC", placeholder="Ej: 14111500")
-    
-    with f2:
-        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Suministro")
-        
-    with f3:
-        # Filtro de Empresa Dinámico
+    with r1_c2:
+        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Suministro de papelería")
+
+    # Fila 2 de filtros
+    r2_c1, r2_c2 = st.columns(2)
+    with r2_c1:
+        search_entidad = st.text_input("Entidad (Contratante)", placeholder="Ej: Alcaldía de Pereira")
+    with r2_c2:
         company_col = col_map['empresa']
         if company_col:
             company_options = ["Todas"] + sorted(df[company_col].unique().tolist())
@@ -166,14 +167,18 @@ if raw_df is not None:
     if search_object:
         filtered_df = filtered_df[filtered_df[col_map['objeto']].str.contains(search_object, case=False, na=False)]
 
-    # 2. Filtro por UNSPSC
+    # 2. Filtro por Entidad (Nueva lógica)
+    if search_entidad:
+        filtered_df = filtered_df[filtered_df[col_map['contratante']].str.contains(search_entidad, case=False, na=False)]
+
+    # 3. Filtro por UNSPSC
     if target_codes:
         def match_all(val):
             row_codes = [c.strip() for c in str(val).replace(';', ',').split(',')]
             return all(tc in row_codes for tc in target_codes)
         filtered_df = filtered_df[filtered_df[col_map['unspsc']].apply(match_all)]
 
-    # 3. Filtro por Empresa (Nuevo)
+    # 4. Filtro por Empresa
     if selected_company != "Todas" and company_col:
         filtered_df = filtered_df[filtered_df[company_col] == selected_company]
 
@@ -183,15 +188,15 @@ if raw_df is not None:
     # DASHBOARD Y RESUMEN
     # -------------------------------------------------------------------------
     st.markdown("---")
-    st.subheader(f"📊 Resumen: {selected_company}")
+    st.subheader(f"📊 Resumen de Resultados")
     
     m1, m2, m3 = st.columns(3)
     count = len(filtered_df)
-    m1.metric("Experiencias", f"{count}")
+    m1.metric("Experiencias Encontradas", f"{count}")
     m2.metric("Valor Total SMMLV", format_latino_decimal(filtered_df['clean_smmlv'].sum()))
     m3.metric("Presupuesto Total COP", format_latino_money(filtered_df['clean_cop'].sum()))
 
-    # Mostrar tabla de desglose solo si hay varias empresas presentes en el set filtrado
+    # Desglose por Empresa
     if company_col:
         active_companies = filtered_df[company_col].nunique()
         if active_companies > 1:
@@ -214,11 +219,11 @@ if raw_df is not None:
             export_df[col_map['valor_smmlv']] = export_df['clean_smmlv'].apply(format_latino_decimal)
             export_df[col_map['valor_cop']] = export_df['clean_cop'].apply(lambda x: f"{x:,.0f}".replace(",", "."))
             export_df.drop(columns=['clean_smmlv', 'clean_cop', 'Calculated_Total_Codigos']).to_excel(writer, index=False)
-        st.download_button(label=f"📊 Descargar Resultados ({selected_company})", data=output.getvalue(), file_name=f"reporte_{selected_company}.xlsx")
+        st.download_button(label=f"📊 Descargar Reporte en Excel", data=output.getvalue(), file_name=f"reporte_experiencias.xlsx")
 
     st.markdown("---")
 
-    # RESULTADOS
+    # RESULTADOS EN TARJETAS
     if count == 0:
         st.warning("No hay coincidencias para los criterios seleccionados.")
     else:
@@ -248,4 +253,4 @@ if raw_df is not None:
 """
             st.markdown(card_html, unsafe_allow_html=True)
 else:
-    st.info("👋 Bienvenido. Por favor sube tu archivo CSV para comenzar el análisis multi-empresa.")
+    st.info("👋 Bienvenido. Por favor sube tu archivo CSV para comenzar el análisis.")
