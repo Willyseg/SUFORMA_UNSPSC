@@ -4,7 +4,7 @@ import io
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Buscador de Experiencias SuForma",
+    page_title="Buscador de Experiencias SuForma - SF - Sisucol",
     page_icon="🔍",
     layout="wide"
 )
@@ -146,14 +146,14 @@ if raw_df is not None:
         # Lógica mejorada: ahora permite espacios o comas
         search_unspsc = st.text_input(
             "Códigos UNSPSC", 
-            placeholder="Ej: 3116 3119 o 3116, 3119"
+            placeholder="Ej: 14111500, 14111800, 24111500"
         )
     with r1_c2:
-        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Papelería")
+        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: PAPELERIA")
 
     r2_c1, r2_c2 = st.columns(2)
     with r2_c1:
-        search_entidad = st.text_input("Entidad (Contratante)", placeholder="Ej: Alcaldía")
+        search_entidad = st.text_input("Entidad (Contratante)", placeholder="Ej: ALCALDIA")
     with r2_c2:
         company_col = col_map['empresa']
         if company_col:
