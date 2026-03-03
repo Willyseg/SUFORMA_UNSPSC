@@ -52,7 +52,7 @@ def clean_smmlv(val):
         return 0.0
 
 def identify_columns(df):
-    """Mapeo inteligente de columnas basado en el formato suministrado."""
+    """Mapeo inteligente y flexible de columnas."""
     cols = list(df.columns)
     mapping = {
         'id': None, 
@@ -67,10 +67,10 @@ def identify_columns(df):
     
     for col in cols:
         c = str(col).lower().strip()
-        if ('id' in c or 'experiencia_no' in c) and mapping['id'] is None: mapping['id'] = col
+        if ('id' in c or 'experiencia' in c or 'no' in c) and mapping['id'] is None: mapping['id'] = col
         elif 'consecutivo' in c: mapping['consecutivo'] = col
         elif ('empresa' in c or 'contratista' in c) and mapping['empresa'] is None: mapping['empresa'] = col
-        elif 'contratante' in c: mapping['contratante'] = col
+        elif ('contratante' in c or 'entidad' in c) and mapping['contratante'] is None: mapping['contratante'] = col
         elif 'objeto' in c: mapping['objeto'] = col
         elif ('valor' in c or 'presupuesto' in c) and 'cop' in c: mapping['valor_cop'] = col
         elif 'smmlv' in c: mapping['valor_smmlv'] = col
@@ -110,7 +110,7 @@ st.title("💼 Buscador de Experiencias SuForma")
 with st.sidebar:
     st.header("📂 Gestión de Datos")
     uploaded_file = st.file_uploader("Subir base de datos (CSV)", type=['csv'])
-    st.info("Filtra por UNSPSC, Objeto, Entidad y Empresa simultáneamente.")
+    st.info("Búsqueda avanzada: permite códigos parciales (Segmento, Familia o Clase).")
 
 raw_df = load_data(uploaded_file)
 
@@ -122,7 +122,8 @@ if raw_df is not None:
     missing = [k for k in required if col_map[k] is None]
     
     if missing:
-        st.error(f"❌ No se detectaron las columnas: {', '.join(missing)}")
+        st.error(f"❌ No se detectaron todas las columnas necesarias. Faltan: {', '.join(missing)}")
+        st.write("Columnas detectadas en tu archivo:", list(df.columns))
         st.stop()
 
     # PROCESAMIENTO
@@ -136,21 +137,19 @@ if raw_df is not None:
     df['Calculated_Total_Codigos'] = df[col_map['unspsc']].apply(count_codes)
 
     # -------------------------------------------------------------------------
-    # SECCIÓN DE FILTROS ACTUALIZADA (4 CAMPOS)
+    # SECCIÓN DE FILTROS
     # -------------------------------------------------------------------------
     st.subheader("🔍 Filtros de Búsqueda")
     
-    # Fila 1 de filtros
     r1_c1, r1_c2 = st.columns(2)
     with r1_c1:
-        search_unspsc = st.text_input("Códigos UNSPSC", placeholder="Ej: 14111500")
+        search_unspsc = st.text_input("Códigos UNSPSC (Búsqueda por inicio de código)", placeholder="Ej: 1411 (busca toda la familia)")
     with r1_c2:
-        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Suministro de papelería")
+        search_object = st.text_input("Palabras clave en Objeto", placeholder="Ej: Papelería")
 
-    # Fila 2 de filtros
     r2_c1, r2_c2 = st.columns(2)
     with r2_c1:
-        search_entidad = st.text_input("Entidad (Contratante)", placeholder="Ej: Alcaldía de Pereira")
+        search_entidad = st.text_input("Entidad (Contratante)", placeholder="Ej: Alcaldía")
     with r2_c2:
         company_col = col_map['empresa']
         if company_col:
@@ -163,41 +162,49 @@ if raw_df is not None:
     filtered_df = df.copy()
     target_codes = [c.strip() for c in search_unspsc.split(',') if c.strip()]
 
-    # 1. Filtro por Objeto
     if search_object:
         filtered_df = filtered_df[filtered_df[col_map['objeto']].str.contains(search_object, case=False, na=False)]
 
-    # 2. Filtro por Entidad (Nueva lógica)
     if search_entidad:
         filtered_df = filtered_df[filtered_df[col_map['contratante']].str.contains(search_entidad, case=False, na=False)]
 
-    # 3. Filtro por UNSPSC
     if target_codes:
-        def match_all(val):
-            row_codes = [c.strip() for c in str(val).replace(';', ',').split(',')]
-            return all(tc in row_codes for tc in target_codes)
-        filtered_df = filtered_df[filtered_df[col_map['unspsc']].apply(match_all)]
+        def match_logic(val):
+            # Obtener lista de códigos reales de la fila
+            row_codes = [c.strip() for c in str(val).replace(';', ',').split(',') if c.strip()]
+            
+            # Lógica AND: Cada código buscado (tc) debe encontrar al menos un código en la fila (rc) que EMPIECE por tc
+            for tc in target_codes:
+                found_match_for_this_tc = False
+                for rc in row_codes:
+                    if rc.startswith(tc):
+                        found_match_for_this_tc = True
+                        break
+                if not found_match_for_this_tc:
+                    return False # Si un código buscado no encontró coincidencia, la fila no sirve
+            return True
 
-    # 4. Filtro por Empresa
+        filtered_df = filtered_df[filtered_df[col_map['unspsc']].apply(match_logic)]
+
     if selected_company != "Todas" and company_col:
         filtered_df = filtered_df[filtered_df[company_col] == selected_company]
 
+    # Ordenamiento
     filtered_df = filtered_df.sort_values(by='clean_smmlv', ascending=False)
 
     # -------------------------------------------------------------------------
-    # DASHBOARD Y RESUMEN
+    # DASHBOARD
     # -------------------------------------------------------------------------
     st.markdown("---")
     st.subheader(f"📊 Resumen de Resultados")
     
     m1, m2, m3 = st.columns(3)
     count = len(filtered_df)
-    m1.metric("Experiencias Encontradas", f"{count}")
-    m2.metric("Valor Total SMMLV", format_latino_decimal(filtered_df['clean_smmlv'].sum()))
-    m3.metric("Presupuesto Total COP", format_latino_money(filtered_df['clean_cop'].sum()))
+    m1.metric("Experiencias", f"{count}")
+    m2.metric("Total SMMLV", format_latino_decimal(filtered_df['clean_smmlv'].sum()))
+    m3.metric("Total COP", format_latino_money(filtered_df['clean_cop'].sum()))
 
-    # Desglose por Empresa
-    if company_col:
+    if company_col and count > 0:
         active_companies = filtered_df[company_col].nunique()
         if active_companies > 1:
             st.markdown("#### Desglose por Empresa")
@@ -219,23 +226,35 @@ if raw_df is not None:
             export_df[col_map['valor_smmlv']] = export_df['clean_smmlv'].apply(format_latino_decimal)
             export_df[col_map['valor_cop']] = export_df['clean_cop'].apply(lambda x: f"{x:,.0f}".replace(",", "."))
             export_df.drop(columns=['clean_smmlv', 'clean_cop', 'Calculated_Total_Codigos']).to_excel(writer, index=False)
-        st.download_button(label=f"📊 Descargar Reporte en Excel", data=output.getvalue(), file_name=f"reporte_experiencias.xlsx")
+        st.download_button(label="📊 Descargar Reporte en Excel", data=output.getvalue(), file_name="reporte_suforma.xlsx")
 
     st.markdown("---")
 
-    # RESULTADOS EN TARJETAS
+    # RESULTADOS
     if count == 0:
-        st.warning("No hay coincidencias para los criterios seleccionados.")
+        st.warning("No se encontraron coincidencias.")
     else:
         for _, row in filtered_df.iterrows():
-            all_codes = [c.strip() for c in str(row[col_map['unspsc']]).replace(';', ',').split(',') if c.strip()]
-            badges_html = "".join([f"<span style='background:{'#2563eb' if c in target_codes else '#f1f5f9'}; color:{'white' if c in target_codes else '#64748b'}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px; border: 1px solid {'#1d4ed8' if c in target_codes else '#e2e8f0'};'>{c}</span>" for c in all_codes])
+            row_codes_list = [c.strip() for c in str(row[col_map['unspsc']]).replace(';', ',').split(',') if c.strip()]
+            
+            # Construir badges con resaltado por prefijo
+            badges_html = ""
+            for rc in row_codes_list:
+                # Un código se resalta si empieza por CUALQUIERA de los códigos buscados
+                is_match = any(rc.startswith(tc) for tc in target_codes) if target_codes else False
+                
+                bg = "#2563eb" if is_match else "#f1f5f9"
+                color = "white" if is_match else "#64748b"
+                border = "1px solid #1d4ed8" if is_match else "1px solid #e2e8f0"
+                weight = "600" if is_match else "normal"
+                
+                badges_html += f"<span style='background:{bg}; color:{color}; border:{border}; padding:2px 10px; border-radius:15px; font-size:12px; margin-right:5px; display:inline-block; margin-bottom:5px; font-weight:{weight};'>{rc}</span>"
             
             card_html = f"""
 <div style="background:white; border-radius:12px; border:1px solid #e5e7eb; padding:20px; margin-bottom:20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
 <div style="font-size:12px; color:#9ca3af;">ID: {row[col_map['id']]} | Consecutivo: {row[col_map.get('consecutivo', 'N/A')]}</div>
-<div class="company-badge">🏢 {row[company_col] if company_col else 'N/A'}</div>
+<div class="company-badge">🏢 {row[company_col] if company_col else 'Empresa'}</div>
 </div>
 <div style="font-size:18px; font-weight:bold; color:#111827; margin-bottom:4px;">{row[col_map['contratante']]}</div>
 <div style="font-size:14px; color:#4b5563; margin:12px 0; border-left:4px solid #3b82f6; padding-left:12px; line-height:1.4;">{row[col_map['objeto']]}</div>
@@ -247,10 +266,10 @@ if raw_df is not None:
 <div style="font-size:16px; font-weight:bold; color:#3b82f6;">{row['Calculated_Total_Codigos']}</div>
 </div>
 </div>
-<div style="font-size:11px; color:#9ca3af; margin-bottom:6px; font-weight:bold;">CÓDIGOS UNSPSC:</div>
+<div style="font-size:11px; color:#9ca3af; margin-bottom:6px; font-weight:bold;">CÓDIGOS UNSPSC: {f'(Filtrado por: {", ".join(target_codes)})' if target_codes else ''}</div>
 <div>{badges_html}</div>
 </div>
 """
             st.markdown(card_html, unsafe_allow_html=True)
 else:
-    st.info("👋 Bienvenido. Por favor sube tu archivo CSV para comenzar el análisis.")
+    st.info("👋 Bienvenido. Sube tu archivo CSV para comenzar el análisis.")
